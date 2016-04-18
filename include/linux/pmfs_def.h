@@ -40,6 +40,8 @@
 #define PMFS_MOUNT_FORMAT      0x000400        /* was FS formatted on mount? */
 #define PMFS_MOUNT_MOUNTING    0x000800        /* FS currently being mounted */
 
+#define PMFS_MOUNT_DIR_INDEX   0x001000        /*By ys*/
+
 /*
  * Maximal count of links to a file
  */

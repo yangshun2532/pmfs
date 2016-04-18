@@ -120,6 +120,20 @@ int pmfs_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 	if (!dentry->d_name.len)
 		return -EINVAL;
 
+/* By ys, add a index to the directory
+*
+*/
+	
+	if (test_opt(sb,DIR_INDEX)) {
+		printk("go to dx_add_entry");
+		/*retval = ext3_dx_add_entry(handle, dentry, inode);
+		if (!retval || (retval != ERR_BAD_DX_DIR))
+			return retval;
+		assert(0);*/
+	}
+
+	
+
 	pidir = pmfs_get_inode(sb, dir->i_ino);
 	pmfs_add_logentry(sb, trans, pidir, MAX_DATA_PER_LENTRY, LE_DATA);
 

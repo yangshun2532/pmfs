@@ -154,7 +154,7 @@ enum {
 	Opt_num_inodes, Opt_mode, Opt_uid,
 	Opt_gid, Opt_blocksize, Opt_wprotect, Opt_wprotectold,
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
-	Opt_hugemmap, Opt_nohugeioremap, Opt_dbgmask, Opt_err
+	Opt_hugemmap, Opt_nohugeioremap, Opt_dbgmask,Opt_dir_index, Opt_err //By ys,add Opt_dir_index
 };
 
 static const match_table_t tokens = {
@@ -174,6 +174,7 @@ static const match_table_t tokens = {
 	{ Opt_hugemmap,	     "hugemmap"		  },
 	{ Opt_nohugeioremap, "nohugeioremap"	  },
 	{ Opt_dbgmask,	     "dbgmask=%u"	  },
+	{ Opt_dir_index,     "dir_index"      },  //By ys
 	{ Opt_err,	     NULL		  },
 };
 
@@ -324,6 +325,14 @@ static int pmfs_parse_options(char *options, struct pmfs_sb_info *sbi,
 			if (match_int(&args[0], &option))
 				goto bad_val;
 			pmfs_dbgmask = option;
+			break;
+			//By ys
+		case Opt_dir_index:
+			if (remount)
+				goto bad_opt;
+			set_opt(sbi->s_mount_opt, DIR_INDEX);
+			pmfs_info
+				("PMFS: Enabling Dir Index\n");
 			break;
 		default: {
 			goto bad_opt;
