@@ -370,7 +370,7 @@ struct ext2_dir_entry_2 *ext2_find_entry (struct inode * dir,
 	int namelen = child->len;
 	unsigned reclen = EXT2_DIR_REC_LEN(namelen);
 	unsigned long start, n;
-	unsigned long npages = dir_pages(dir);
+	unsigned long npages = dir_pages(dir); //计算数据一共占几个页面
 	struct page *page = NULL;
 	struct ext2_inode_info *ei = EXT2_I(dir);
 	ext2_dirent * de;
@@ -514,11 +514,11 @@ int ext2_add_link (struct dentry *dentry, struct inode *inode)
 			goto out;
 		lock_page(page);
 		kaddr = page_address(page);
-		dir_end = kaddr + ext2_last_byte(dir, n);
+		dir_end = kaddr + ext2_last_byte(dir, n);  //返回最后一个有效字节，如果不是最后一页，最后一个有效字节就是页面大小
 		de = (ext2_dirent *)kaddr;
 		kaddr += PAGE_CACHE_SIZE - reclen;
 		while ((char *)de <= kaddr) {
-			if ((char *)de == dir_end) {
+			if ((char *)de == dir_end) {//结合while的判断条件，只有到达最后一个数据页的末尾时才进入该分支
 				/* We hit i_size */
 				name_len = 0;
 				rec_len = chunk_size;
@@ -547,7 +547,7 @@ int ext2_add_link (struct dentry *dentry, struct inode *inode)
 		ext2_put_page(page);
 	}
 	BUG();
-	return -EINVAL;
+	return -EINVAL;  //空间不够
 
 got_it:
 	pos = page_offset(page) +
