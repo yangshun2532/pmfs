@@ -136,7 +136,10 @@ struct dx_hash_info
 
 /* Function Prototypes */
 extern void pmfs_error_mng(struct super_block *sb, const char *fmt, ...);
-
+/*By ys,Hash.c*/
+extern int pmfs_dirhash(const char *name, int len, struct
+			  dx_hash_info *hinfo);
+/*end ys*/
 /* file.c */
 extern int pmfs_mmap(struct file *file, struct vm_area_struct *vma);
 
@@ -269,6 +272,24 @@ static inline int pmfs_calc_checksum(u8 *data, int n)
 		return 1;
 }
 
+void pmfs_warning(struct super_block *sb, const char *function,
+		  const char *fmt, ...)
+{
+	struct va_format vaf;
+	va_list args;
+
+	va_start(args, fmt);
+
+	vaf.fmt = fmt;
+	vaf.va = &args;
+
+	printk(KERN_WARNING "PMFS-fs (%s): warning: %s: %pV\n",
+	       sb->s_id, function, &vaf);
+
+	va_end(args);
+}
+
+
 struct pmfs_blocknode_lowhigh {
        __le64 block_low;
        __le64 block_high;
@@ -336,7 +357,10 @@ struct pmfs_sb_info {
 	struct task_struct *log_cleaner_thread;
 	wait_queue_head_t  log_cleaner_wait;
 	bool redo_log;
-
+	/*By ys,direntry index related*/
+	u32 s_hash_seed[4];
+	int s_def_hash_version;
+	int s_hash_unsigned;	/* 3 if hash should be signed, 0 if not */
 	/* truncate list related structures */
 	struct list_head s_truncate;
 	struct mutex s_truncate_lock;

@@ -152,6 +152,156 @@ static void dx_insert_block(struct dx_frame *frame, u32 hash, u32 block)
 	dx_set_count(entries, count + 1);
 }
 
+/*
+ * Probe for a directory leaf block to search.
+ *
+ * dx_probe can return ERR_BAD_DX_DIR, which means there was a format
+ * error in the directory index, and the caller should fall back to
+ * searching the directory normally.  The callers of dx_probe **MUST**
+ * check for this error code, and make sure it never gets reflected
+ * back to userspace.
+ */
+static struct dx_frame *
+dx_probe(struct qstr *entry, struct inode *dir,
+	 struct dx_hash_info *hinfo, struct dx_frame *frame_in, int *retval)
+{
+	unsigned count, indirect;
+	struct dx_entry *at, *entries, *p, *q, *m;
+	struct dx_root *root;
+	struct char *blk_base;
+	struct dx_frame *frame = frame_in;
+	u32 hash;
+
+	frame->bh = NULL;
+
+	blk_base = pmfs_get_block(sb, pmfs_find_data_block(dir, 0));
+		if (!blk_base) {
+			*retval = ERR_BAD_DX_DIR;
+			goto fail;
+			}
+	/*if (!(bh = ext3_dir_bread(NULL, dir, 0, 0, err))) {
+		*err = ERR_BAD_DX_DIR;
+		goto fail;
+	}*/
+	root = (struct dx_root *)blk_base;
+	if (root->info.hash_version != DX_HASH_TEA &&
+	    root->info.hash_version != DX_HASH_HALF_MD4 &&
+	    root->info.hash_version != DX_HASH_LEGACY) {
+		pmfs_warning(dir->i_sb, __func__,
+			     "Unrecognised inode hash code %d",
+			     root->info.hash_version);
+		*retval = ERR_BAD_DX_DIR;
+		goto fail;
+	}
+	hinfo->hash_version = root->info.hash_version;
+	if (hinfo->hash_version <= DX_HASH_TEA)
+		hinfo->hash_version += PMFS_SB(dir->i_sb)->s_hash_unsigned;
+	hinfo->seed = PMFS_SB(dir->i_sb)->s_hash_seed;
+	if (entry)
+		pmfs_dirhash(entry->name, entry->len, hinfo);
+	hash = hinfo->hash;
+
+	if (root->info.unused_flags & 1) {
+		pmfs_warning(dir->i_sb, __func__,
+			     "Unimplemented inode hash flags: %#06x",
+			     root->info.unused_flags);
+		*retval = ERR_BAD_DX_DIR;
+		goto fail;
+	}
+
+	if ((indirect = root->info.indirect_levels) > 1) {
+		pmfs_warning(dir->i_sb, __func__,
+			     "Unimplemented inode hash depth: %#06x",
+			     root->info.indirect_levels);
+		*retval = ERR_BAD_DX_DIR;
+		goto fail;
+	}
+
+	entries = (struct dx_entry *) (((char *)&root->info) +
+				       root->info.info_length);
+
+	if (dx_get_limit(entries) != dx_root_limit(dir,
+						   root->info.info_length)) {
+		pmfs_warning(dir->i_sb, __func__,
+			     "dx entry: limit != root limit");
+		*retval = ERR_BAD_DX_DIR;
+		goto fail;
+	}
+
+	dxtrace (printk("Look up %x", hash));
+	while (1)
+	{
+		count = dx_get_count(entries);
+		if (!count || count > dx_get_limit(entries)) {
+			pmfs_warning(dir->i_sb, __func__,
+				     "dx entry: no count or count > limit");
+			*retval = ERR_BAD_DX_DIR;
+			goto fail2;
+		}
+
+		p = entries + 1;
+		q = entries + count - 1;
+		while (p <= q)
+		{
+			m = p + (q - p)/2;
+			dxtrace(printk("."));
+			if (dx_get_hash(m) > hash)
+				q = m - 1;
+			else
+				p = m + 1;
+		}
+
+		if (0) // linear search cross check
+		{
+			unsigned n = count - 1;
+			at = entries;
+			while (n--)
+			{
+				dxtrace(printk(","));
+				if (dx_get_hash(++at) > hash)
+				{
+					at--;
+					break;
+				}
+			}
+			assert (at == p - 1);
+		}
+
+		at = p - 1;
+		dxtrace(printk(" %x->%u\n", at == entries? 0: dx_get_hash(at), dx_get_block(at)));
+		frame->bh = blk_base;
+		frame->entries = entries;
+		frame->at = at;
+		if (!indirect--) return frame;
+
+		blk_base = pmfs_get_block(sb, pmfs_find_data_block(dir, dx_get_block(frame->at)));
+		if (!blk_base) {
+			*retval = ERR_BAD_DX_DIR;
+			goto fail2;
+			}
+		at = entries = ((struct dx_node *) blk_base)->entries;
+		if (dx_get_limit(entries) != dx_node_limit (dir)) {
+			pmfs_warning(dir->i_sb, __func__,
+				     "dx entry: limit != node limit");
+			
+			*err = ERR_BAD_DX_DIR;
+			goto fail2;
+		}
+		frame++;
+		frame->bh = NULL;
+	}
+fail2:
+	while (frame >= frame_in) {
+		frame--;
+	}
+fail:
+	if (*err == ERR_BAD_DX_DIR)
+		pmfs_warning(dir->i_sb, __func__,
+			     "Corrupt dir inode %ld, running e2fsck is "
+			     "recommended.", dir->i_ino);
+	return NULL;
+}
+
 
 /*end By ys*/
 
@@ -253,14 +403,13 @@ static int pmfs_dx_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 	struct pmfs_inode* pidir;
 	int retval = -EINVAL;
 
-	frame = dx_probe(&dentry->d_name, dir, &hinfo, frames, &err);
+	frame = dx_probe(&dentry->d_name, dir, &hinfo, frames, &retval);
 	if (!frame)
-		return err;
+		goto out;
 	entries = frame->entries;
 	at = frame->at;
 
-	blk_base =
-			pmfs_get_block(sb, pmfs_find_data_block(dir, dx_get_block(frame->at)));
+	blk_base = pmfs_get_block(sb, pmfs_find_data_block(dir, dx_get_block(frame->at)));
 		if (!blk_base) {
 			retval = -EIO;
 			goto out;
