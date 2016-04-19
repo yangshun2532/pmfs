@@ -24,6 +24,138 @@
 #define DT2IF(dt) (((dt) << 12) & S_IFMT)
 #define IF2DT(sif) (((sif) & S_IFMT) >> 12)
 
+/*By ys, dir_index-relating data structures
+*/
+#ifdef DX_DEBUG
+#define dxtrace(command) command
+#else
+#define dxtrace(command)
+#endif
+
+struct dx_root
+{
+	struct fake_dirent dot;
+	char dot_name[4];
+	struct fake_dirent dotdot;
+	char dotdot_name[4];
+	struct dx_root_info
+	{
+		__le32 reserved_zero;
+		u8 hash_version;
+		u8 info_length; /* 8 */
+		u8 indirect_levels;
+		u8 unused_flags;
+	}
+	info;
+	struct dx_entry	entries[0];
+};
+
+
+struct dx_frame
+{
+	char *bh;  //the address of a data block
+	struct dx_entry *entries;
+	struct dx_entry *at;
+};
+
+struct fake_dirent
+{
+	__le32 inode;
+	__le16 rec_len;
+	u8 name_len;
+	u8 file_type;
+};
+
+struct dx_countlimit
+{
+	__le16 limit;
+	__le16 count;
+};
+
+struct dx_entry
+{
+	__le32 hash;
+	__le32 block;
+};
+
+struct dx_node
+{
+	struct fake_dirent fake;
+	struct dx_entry	entries[0];
+};
+
+
+static inline unsigned dx_get_block (struct dx_entry *entry)
+{
+	return le32_to_cpu(entry->block) & 0x00ffffff;
+}
+
+static inline void dx_set_block (struct dx_entry *entry, unsigned value)
+{
+	entry->block = cpu_to_le32(value);
+}
+
+static inline unsigned dx_get_hash (struct dx_entry *entry)
+{
+	return le32_to_cpu(entry->hash);
+}
+
+static inline void dx_set_hash (struct dx_entry *entry, unsigned value)
+{
+	entry->hash = cpu_to_le32(value);
+}
+
+static inline unsigned dx_get_count (struct dx_entry *entries)
+{
+	return le16_to_cpu(((struct dx_countlimit *) entries)->count);
+}
+
+static inline unsigned dx_get_limit (struct dx_entry *entries)
+{
+	return le16_to_cpu(((struct dx_countlimit *) entries)->limit);
+}
+
+static inline void dx_set_count (struct dx_entry *entries, unsigned value)
+{
+	((struct dx_countlimit *) entries)->count = cpu_to_le16(value);
+}
+
+static inline void dx_set_limit (struct dx_entry *entries, unsigned value)
+{
+	((struct dx_countlimit *) entries)->limit = cpu_to_le16(value);
+}
+
+static inline unsigned dx_root_limit (struct inode *dir, unsigned infosize)
+{
+	unsigned entry_space = dir->i_sb->s_blocksize - PMFS_DIR_REC_LEN(1) -
+		PMFS_DIR_REC_LEN(2) - infosize;
+	return entry_space / sizeof(struct dx_entry);
+}
+
+static inline unsigned dx_node_limit (struct inode *dir)
+{
+	unsigned entry_space = dir->i_sb->s_blocksize - PMFS_DIR_REC_LEN(0);
+	return entry_space / sizeof(struct dx_entry);
+}
+
+static void dx_insert_block(struct dx_frame *frame, u32 hash, u32 block)
+{
+	struct dx_entry *entries = frame->entries;
+	struct dx_entry *old = frame->at, *new = old + 1;
+	int count = dx_get_count(entries);
+
+	assert(count < dx_get_limit(entries));
+	assert(old < entries + count);
+	memmove(new + 1, new, (char *)(entries + count) - (char *)(new));
+	dx_set_hash(new, hash);
+	dx_set_block(new, block);
+	dx_set_count(entries, count + 1);
+}
+
+
+/*end By ys*/
+
+
 static int pmfs_add_dirent_to_buf(pmfs_transaction_t *trans,
 	struct dentry *dentry, struct inode *inode,
 	struct pmfs_direntry *de, u8 *blk_base,  struct pmfs_inode *pidir)
@@ -103,6 +235,133 @@ static int pmfs_add_dirent_to_buf(pmfs_transaction_t *trans,
 	return 0;
 }
 
+/*
+ * By ys
+ * Returns 0 for success, or a negative error value 
+ */
+static int pmfs_dx_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
+			     struct inode *inode)
+{
+	struct dx_frame frames[2], *frame;
+	struct dx_entry *entries, *at;
+	struct dx_hash_info hinfo;
+	//struct buffer_head * bh;
+	char *blk_base;
+	struct inode *dir = dentry->d_parent->d_inode;
+	struct super_block * sb = dir->i_sb;
+	struct pmfs_direntry*de;
+	struct pmfs_inode* pidir;
+	int retval = -EINVAL;
+
+	frame = dx_probe(&dentry->d_name, dir, &hinfo, frames, &err);
+	if (!frame)
+		return err;
+	entries = frame->entries;
+	at = frame->at;
+
+	blk_base =
+			pmfs_get_block(sb, pmfs_find_data_block(dir, dx_get_block(frame->at)));
+		if (!blk_base) {
+			retval = -EIO;
+			goto out;
+			}
+	pidir = pmfs_get_inode(sb, dir->i_ino);
+	retval = pmfs_add_dirent_to_buf(trans, dentry, inode,
+				NULL, blk_base, pidir);
+		if (retval != -ENOSPC)
+			goto out;
+		
+
+	/* Block full, should compress but for now just split */
+	dxtrace(printk("using %u of %u node entries\n",
+		       dx_get_count(entries), dx_get_limit(entries)));
+	/* Need to split index? */
+	if (dx_get_count(entries) == dx_get_limit(entries)) {
+		u32 blocks;
+		unsigned icount = dx_get_count(entries);
+		int levels = frame - frames;
+		struct dx_entry *entries2;
+		struct dx_node *node2;
+		struct char *blk_base2;
+
+		if (levels && (dx_get_count(frames->entries) ==
+			       dx_get_limit(frames->entries))) {
+			printk(KERN_WARNING
+				     "Directory index full! in %s",__func__);
+			err = -ENOSPC;
+			goto out;
+		}
+		blocks = dir->i_size >> sb->s_blocksize_bits;
+		retval = pmfs_alloc_blocks(trans, dir, blocks, 1, false);
+		if (retval)
+			goto out;
+
+		dir->i_size += dir->i_sb->s_blocksize;
+		pmfs_update_isize(dir, pidir);
+
+		blk_base2 = pmfs_get_block(sb, pmfs_find_data_block(dir, blocks));
+		if (!blk_base2) {
+			retval = -ENOSPC;
+			goto out;
+		}
+	
+		node2 = (struct dx_node *)(blk_base2);
+		entries2 = node2->entries;
+		memset(&node2->fake, 0, sizeof(struct fake_dirent));
+		node2->fake.rec_len = cpu_to_le16(sb->s_blocksize);
+		
+		if (levels) {
+			unsigned icount1 = icount/2, icount2 = icount - icount1;
+			unsigned hash2 = dx_get_hash(entries + icount1);
+			dxtrace(printk("Split index %i/%i\n", icount1, icount2));
+
+
+			memcpy ((char *) entries2, (char *) (entries + icount1),
+				icount2 * sizeof(struct dx_entry));
+			dx_set_count (entries, icount1);
+			dx_set_count (entries2, icount2);
+			dx_set_limit (entries2, dx_node_limit(dir));
+
+			/* Which index block gets the new entry? */
+			if (at - entries >= icount1) {
+				frame->at = at = at - entries - icount1 + entries2;
+				frame->entries = entries = entries2;
+				swap(frame->bh, blk_base2);
+			}
+			dx_insert_block (frames + 0, hash2, blocks);
+			dxtrace(dx_show_index ("node", frames[1].entries));
+			dxtrace(dx_show_index ("node",
+			       ((struct dx_node *) bh2->b_data)->entries));
+		
+		} else {
+			dxtrace(printk("Creating second level index...\n"));
+			memcpy((char *) entries2, (char *) entries,
+			       icount * sizeof(struct dx_entry));
+			dx_set_limit(entries2, dx_node_limit(dir));
+
+			/* Set up root */
+			dx_set_count(entries, 1);
+			dx_set_block(entries + 0, blocks);
+			((struct dx_root *) frames[0].bh->b_data)->info.indirect_levels = 1;
+
+			/* Add new access path frame */
+			frame = frames + 1;
+			frame->at = at = at - entries + entries2;
+			frame->entries = entries = entries2;
+			frame->bh = blk_base2;
+		}
+	}
+	de = do_split(trans, dir, &blk_base, frame, &hinfo, &retval);
+	if (!de)
+		goto out;
+	retval = pmfs_add_dirent_to_buf(trans, dentry, inode,
+				de, blk_base, pidir);
+	out:
+		return retval;
+
+}
+
+
 /* adds a directory entry pointing to the inode. assumes the inode has
  * already been logged for consistency
  */
@@ -124,18 +383,17 @@ int pmfs_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 *
 */
 	
-	if (test_opt(sb,DIR_INDEX)) {
-		printk("go to dx_add_entry");
-		/*retval = ext3_dx_add_entry(handle, dentry, inode);
-		if (!retval || (retval != ERR_BAD_DX_DIR))
-			return retval;
-		assert(0);*/
-	}
-
-	
-
 	pidir = pmfs_get_inode(sb, dir->i_ino);
 	pmfs_add_logentry(sb, trans, pidir, MAX_DATA_PER_LENTRY, LE_DATA);
+
+	if (test_opt(sb,DIR_INDEX)) {
+			printk("go to dx_add_entry");
+			retval = pmfs_dx_add_entry(trans, dentry, inode);
+			if (!retval || (retval != ERR_BAD_DX_DIR))
+				return retval;
+			assert(0);*/
+		}
+
 
 	blocks = dir->i_size >> sb->s_blocksize_bits;
 	for (block = 0; block < blocks; block++) {

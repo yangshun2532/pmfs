@@ -103,6 +103,37 @@ extern unsigned int pmfs_dbgmask;
 extern unsigned int blk_type_to_shift[PMFS_BLOCK_TYPE_MAX];
 extern unsigned int blk_type_to_size[PMFS_BLOCK_TYPE_MAX];
 
+/*By ys,*/
+
+#define DX_HASH_LEGACY		0
+#define DX_HASH_HALF_MD4	1
+#define DX_HASH_TEA		2
+#define DX_HASH_LEGACY_UNSIGNED	3
+#define DX_HASH_HALF_MD4_UNSIGNED	4
+#define DX_HASH_TEA_UNSIGNED		5
+
+/* hash info structure used by the directory hash */
+struct dx_hash_info
+{
+	u32		hash;
+	u32		minor_hash;
+	int		hash_version;
+	u32		*seed;
+};
+
+
+/* 32 and 64 bit signed EOF for dx directories */
+#define EXT3_HTREE_EOF_32BIT   ((1UL  << (32 - 1)) - 1)
+#define EXT3_HTREE_EOF_64BIT   ((1ULL << (64 - 1)) - 1)
+
+
+/*
+ * Control parameters used by ext3_htree_next_block
+ */
+#define HASH_NB_ALWAYS		1
+/*end By ys*/
+
+
 /* Function Prototypes */
 extern void pmfs_error_mng(struct super_block *sb, const char *fmt, ...);
 
