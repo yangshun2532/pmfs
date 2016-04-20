@@ -84,6 +84,13 @@ struct dx_node
 	struct dx_entry	entries[0];
 };
 
+struct dx_map_entry
+{
+	u32 hash;
+	u16 offs;
+	u16 size;
+};
+
 
 static inline unsigned dx_get_block (struct dx_entry *entry)
 {
@@ -138,6 +145,193 @@ static inline unsigned dx_node_limit (struct inode *dir)
 	return entry_space / sizeof(struct dx_entry);
 }
 
+#ifdef DX_DEBUG
+static void dx_show_index (char * label, struct dx_entry *entries)
+{
+        int i, n = dx_get_count (entries);
+        printk("%s index ", label);
+        for (i = 0; i < n; i++)
+        {
+                printk("%x->%u ", i? dx_get_hash(entries + i): 0, dx_get_block(entries + i));
+        }
+        printk("\n");
+}
+struct stats
+{
+	unsigned names;
+	unsigned space;
+	unsigned bcount;
+};
+
+static struct stats dx_show_leaf(struct dx_hash_info *hinfo, struct pmfs_direntry *de,
+				 int size, int show_names)
+{
+	unsigned names = 0, space = 0;
+	char *base = (char *) de;
+	struct dx_hash_info h = *hinfo;
+
+	printk("names: ");
+	while ((char *) de < base + size)
+	{
+		if (de->inode)
+		{
+			if (show_names)
+			{
+				int len = de->name_len;
+				char *name = de->name;
+				while (len--) printk("%c", *name++);
+				pmfs_dirhash(de->name, de->name_len, &h);
+				printk(":%x.%u ", h.hash,
+				       (unsigned) ((char *) de - base));
+			}
+			space += PMFS_DIR_REC_LEN(de->name_len);
+			names++;
+		}
+		de = pmfs_next_entry(de);
+	}
+	printk("(%i)\n", names);
+	return (struct stats) { names, space, 1 };
+}
+
+struct stats dx_show_entries(struct dx_hash_info *hinfo, struct inode *dir,
+			     struct dx_entry *entries, int levels)
+{
+	unsigned blocksize = dir->i_sb->s_blocksize;
+	struct super_block * sb = dir->i_sb;
+	unsigned count = dx_get_count (entries), names = 0, space = 0, i;
+	unsigned bcount = 0;
+	char *blk_base;
+	int err;
+	printk("%i indexed blocks...\n", count);
+	for (i = 0; i < count; i++, entries++)
+	{
+		u32 block = dx_get_block(entries), hash = i? dx_get_hash(entries): 0;
+		u32 range = i < count - 1? (dx_get_hash(entries + 1) - hash): ~hash;
+		struct stats stats;
+		printk("%s%3u:%03u hash %8x/%8x ",levels?"":"   ", i, block, hash, range);
+		if (!(blk_base = pmfs_get_block(sb, block);)) continue;
+		stats = levels?
+		   dx_show_entries(hinfo, dir, ((struct dx_node *) blk_base)->entries, levels - 1):
+		   dx_show_leaf(hinfo, (struct pmfs_direntry *) blk_base, blocksize, 0);
+		names += stats.names;
+		space += stats.space;
+		bcount += stats.bcount;
+	}
+	if (bcount)
+		printk("%snames %u, fullness %u (%u%%)\n", levels?"":"   ",
+			names, space/bcount,(space/bcount)*100/blocksize);
+	return (struct stats) { names, space, bcount};
+}
+#endif
+
+/*
+ * Directory block splitting, compacting
+ */
+
+/*
+ * Create map of hash values, offsets, and sizes, stored at end of block.
+ * Returns number of entries mapped.
+ */
+static int dx_make_map(struct pmfs_direntry *de, unsigned blocksize,
+		struct dx_hash_info *hinfo, struct dx_map_entry *map_tail)
+{
+	int count = 0;
+	char *base = (char *) de;
+	struct dx_hash_info h = *hinfo;
+
+	while ((char *) de < base + blocksize)
+	{
+		if (de->name_len && de->inode) {
+			pmfs_dirhash(de->name, de->name_len, &h);
+			map_tail--;
+			map_tail->hash = h.hash;
+			map_tail->offs = (u16) ((char *) de - base);
+			map_tail->size = le16_to_cpu(de->rec_len);
+			count++;
+			cond_resched();
+		}
+		/* XXX: do we need to check rec_len == 0 case? -Chris */
+		de = pmfs_next_entry(de);
+	}
+	return count;
+}
+
+/* Sort map by hash value */
+static void dx_sort_map (struct dx_map_entry *map, unsigned count)
+{
+        struct dx_map_entry *p, *q, *top = map + count - 1;
+        int more;
+        /* Combsort until bubble sort doesn't suck */
+        while (count > 2)
+	{
+                count = count*10/13;
+                if (count - 9 < 2) /* 9, 10 -> 11 */
+                        count = 11;
+                for (p = top, q = p - count; q >= map; p--, q--)
+                        if (p->hash < q->hash)
+                                swap(*p, *q);
+        }
+        /* Garden variety bubble sort */
+        do {
+                more = 0;
+                q = top;
+                while (q-- > map)
+		{
+                        if (q[1].hash >= q[0].hash)
+				continue;
+                        swap(*(q+1), *q);
+                        more = 1;
+		}
+	} while(more);
+}
+/*
+ * Move count entries from end of map between two memory locations.
+ * Returns pointer to last entry moved.
+ */
+static struct pmfs_direntry*
+dx_move_dirents(char *from, char *to, struct dx_map_entry *map, int count)
+{
+	unsigned rec_len = 0;
+
+	while (count--) {
+		struct pmfs_direntry *de = (struct pmfs_direntry *) (from + map->offs);
+		rec_len = PMFS_DIR_REC_LEN(de->name_len);
+		memcpy (to, de, rec_len);
+		((struct pmfs_direntry *) to)->rec_len =
+				cpu_to_le16(rec_len);
+		de->inode = 0;
+		map++;
+		to += rec_len;
+	}
+	return (struct pmfs_direntry *) (to - rec_len);
+}
+
+/*
+ * Compact each dir entry in the range to the minimal rec_len.
+ * Returns pointer to last entry in range.
+ */
+static struct pmfs_direntry *dx_pack_dirents(char *base, unsigned blocksize)
+{
+	struct pmfs_direntry *next, *to, *prev;
+	struct pmfs_direntry *de = (struct pmfs_direntry *)base;
+	unsigned rec_len = 0;
+
+	prev = to = de;
+	while ((char *)de < base + blocksize) {
+		next = pmfs_next_entry(de);
+		if (de->inode && de->name_len) {
+			rec_len = PMFS_DIR_REC_LEN(de->name_len);
+			if (de > to)
+				memmove(to, de, rec_len);
+			to->rec_len = cpu_to_le16(rec_len);
+			prev = to;
+			to = (struct pmfs_direntry *) (((char *) to) + rec_len);
+		}
+		de = next;
+	}
+	return prev;
+}
+
 static void dx_insert_block(struct dx_frame *frame, u32 hash, u32 block)
 {
 	struct dx_entry *entries = frame->entries;
@@ -150,6 +344,108 @@ static void dx_insert_block(struct dx_frame *frame, u32 hash, u32 block)
 	dx_set_hash(new, hash);
 	dx_set_block(new, block);
 	dx_set_count(entries, count + 1);
+}
+
+ /* Split a full leaf block to make room for a new dir entry.
+ * Allocate a new block, and move entries so that they are approx. equally full.
+ * Returns pointer to de in block into which the new entry will be inserted.
+ */
+static struct pmfs_direntry *do_split(pmfs_transaction_t *trans, struct inode *dir,
+			struct char **blk_base, struct dx_frame *frame,
+			struct dx_hash_info *hinfo, int *retval)
+{
+	unsigned blocksize = dir->i_sb->s_blocksize;
+	unsigned count, continued;
+	char *blk_base2;
+	u32 blocks;
+	u32 hash2;
+	struct dx_map_entry *map;
+	char *data1 = (*blk_base), *data2;
+	unsigned split, move, size;
+	struct pmfs_direntry *de = NULL, *de2;
+	struct pmfs_inode* pidir;
+	int	err = 0, i;
+
+	/*bh2 = ext3_append (handle, dir, &newblock, &err);
+	if (!(bh2)) {
+		brelse(*bh);
+		*bh = NULL;
+		goto errout;
+	}*/
+	
+	blocks = dir->i_size >> sb->s_blocksize_bits;
+	err = pmfs_alloc_blocks(trans, dir, blocks, 1, false);
+	if (err){
+		*blk_base = NULL;
+		goto errout;
+	}
+
+	dir->i_size += dir->i_sb->s_blocksize;
+	pidir = pmfs_get_inode(sb, dir->i_ino);
+	pmfs_update_isize(dir,pidir);
+	
+	blk_base2 = pmfs_get_block(sb, pmfs_find_data_block(dir, blocks));
+	if (!blk_base2) {
+		err = -ENOSPC;
+		goto errout;
+	}
+	
+	data2 = blk_base2;
+
+	/* create map in the end of data2 block */
+	map = (struct dx_map_entry *) (data2 + blocksize);
+
+	pmfs_memunlock_block(sb, blk_base2);
+	count = dx_make_map ((struct pmfs_direntry *) data1,
+			     blocksize, hinfo, map);
+	map -= count;
+	dx_sort_map (map, count);
+	pmfs_memlock_block(sb, blk_base2);
+	
+	/* Split the existing block in the middle, size-wise */
+	size = 0;
+	move = 0;
+	for (i = count-1; i >= 0; i--) {
+		/* is more than half of this entry in 2nd half of the block? */
+		if (size + map[i].size/2 > blocksize/2)
+			break;
+		size += map[i].size;
+		move++;
+	}
+	/* map index at which we will split */
+	split = count - move;
+	hash2 = map[split].hash;
+	continued = hash2 == map[split - 1].hash;
+	dxtrace(printk("Split block %i at %x, %i/%i\n",
+		dx_get_block(frame->at), hash2, split, count-split));
+
+	/* Fancy dance to stay within two buffers */
+	pmfs_memunlock_block(sb, *blk_base);
+	pmfs_memunlock_block(sb, blk_base2);
+	de2 = dx_move_dirents(data1, data2, map + split, count - split);
+	de = dx_pack_dirents(data1,blocksize);
+	de->rec_len = cpu_to_le16(data1 + blocksize - (char *) de);
+	de2->rec_len = cpu_to_le16(data2 + blocksize - (char *) de2);
+	pmfs_memlock_block(sb, blk_base2);
+	pmfs_memlock_block(sb, *blk_base);
+	
+	dxtrace(dx_show_leaf (hinfo, (struct pmfs_direntry *) data1, blocksize, 1));
+	dxtrace(dx_show_leaf (hinfo, (struct pmfs_direntry *) data2, blocksize, 1));
+
+	/* Which block gets the new entry? */
+	if (hinfo->hash >= hash2)
+	{
+		swap(*blk_base, blk_base2);
+		de = de2;
+	}
+	dx_insert_block (frame, hash2 + continued,blocks);
+	
+	dxtrace(dx_show_index ("frame", frame->entries));
+	return de;
+
+errout:
+	*retval = err;
+	return NULL;
 }
 
 /*
@@ -395,7 +691,6 @@ static int pmfs_dx_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 	struct dx_frame frames[2], *frame;
 	struct dx_entry *entries, *at;
 	struct dx_hash_info hinfo;
-	//struct buffer_head * bh;
 	char *blk_base;
 	struct inode *dir = dentry->d_parent->d_inode;
 	struct super_block * sb = dir->i_sb;
@@ -456,21 +751,25 @@ static int pmfs_dx_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 	
 		node2 = (struct dx_node *)(blk_base2);
 		entries2 = node2->entries;
+		
+		pmfs_memunlock_block(sb, blk_base2);
 		memset(&node2->fake, 0, sizeof(struct fake_dirent));
 		node2->fake.rec_len = cpu_to_le16(sb->s_blocksize);
+		pmfs_memlock_block(sb, blk_base2);
 		
 		if (levels) {
 			unsigned icount1 = icount/2, icount2 = icount - icount1;
 			unsigned hash2 = dx_get_hash(entries + icount1);
 			dxtrace(printk("Split index %i/%i\n", icount1, icount2));
 
-
+			pmfs_memunlock_block(sb, blk_base2);
 			memcpy ((char *) entries2, (char *) (entries + icount1),
 				icount2 * sizeof(struct dx_entry));
 			dx_set_count (entries, icount1);
 			dx_set_count (entries2, icount2);
 			dx_set_limit (entries2, dx_node_limit(dir));
-
+			pmfs_memlock_block(sb, blk_base2);
+			
 			/* Which index block gets the new entry? */
 			if (at - entries >= icount1) {
 				frame->at = at = at - entries - icount1 + entries2;
@@ -480,19 +779,24 @@ static int pmfs_dx_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 			dx_insert_block (frames + 0, hash2, blocks);
 			dxtrace(dx_show_index ("node", frames[1].entries));
 			dxtrace(dx_show_index ("node",
-			       ((struct dx_node *) bh2->b_data)->entries));
+			       ((struct dx_node *) blk_base)->entries));
 		
 		} else {
 			dxtrace(printk("Creating second level index...\n"));
+
+			pmfs_memunlock_block(sb, blk_base2);
 			memcpy((char *) entries2, (char *) entries,
 			       icount * sizeof(struct dx_entry));
 			dx_set_limit(entries2, dx_node_limit(dir));
+			pmfs_memlock_block(sb, blk_base2);
 
+			pmfs_memunlock_block(sb, blk_base);
 			/* Set up root */
 			dx_set_count(entries, 1);
 			dx_set_block(entries + 0, blocks);
 			((struct dx_root *) frames[0].bh->b_data)->info.indirect_levels = 1;
-
+			pmfs_memunlock_block(sb, blk_base);
+			
 			/* Add new access path frame */
 			frame = frames + 1;
 			frame->at = at = at - entries + entries2;
@@ -501,6 +805,9 @@ static int pmfs_dx_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 		}
 	}
 	de = do_split(trans, dir, &blk_base, frame, &hinfo, &retval);
+	pmfs_memunlock_block(sb, blk_base);
+	de->ino = 0;
+	pmfs_memlock_block(sb, blk_base);
 	if (!de)
 		goto out;
 	retval = pmfs_add_dirent_to_buf(trans, dentry, inode,
@@ -540,7 +847,7 @@ int pmfs_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 			retval = pmfs_dx_add_entry(trans, dentry, inode);
 			if (!retval || (retval != ERR_BAD_DX_DIR))
 				return retval;
-			assert(0);*/
+			assert(0);
 		}
 
 
