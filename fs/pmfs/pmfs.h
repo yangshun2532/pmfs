@@ -271,7 +271,7 @@ static inline int pmfs_calc_checksum(u8 *data, int n)
 	else
 		return 1;
 }
-
+/*By ys*/
 void pmfs_warning(struct super_block *sb, const char *function,
 		  const char *fmt, ...)
 {
@@ -288,6 +288,25 @@ void pmfs_warning(struct super_block *sb, const char *function,
 
 	va_end(args);
 }
+
+void pmfs_error(struct super_block *sb, const char *function,
+		const char *fmt, ...)
+{
+	struct va_format vaf;
+	va_list args;
+
+	va_start(args, fmt);
+
+	vaf.fmt = fmt;
+	vaf.va = &args;
+
+	printk(KERN_CRIT "PMFS-fs error (device %s): %s: %pV\n",
+	       sb->s_id, function, &vaf);
+
+	va_end(args);
+}
+
+/*end ys*/
 
 
 struct pmfs_blocknode_lowhigh {
