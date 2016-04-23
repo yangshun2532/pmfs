@@ -61,7 +61,7 @@ struct dx_frame
 struct fake_dirent
 {
 	__le32 inode;
-	__le16 rec_len;
+	__le16 de_len;   // like pmfs_direntry
 	u8 name_len;
 	u8 file_type;
 };
@@ -291,17 +291,17 @@ static void dx_sort_map (struct dx_map_entry *map, unsigned count)
 static struct pmfs_direntry*
 dx_move_dirents(char *from, char *to, struct dx_map_entry *map, int count)
 {
-	unsigned rec_len = 0;
+	unsigned de_len = 0;
 
 	while (count--) {
 		struct pmfs_direntry *de = (struct pmfs_direntry *) (from + map->offs);
-		rec_len = PMFS_DIR_REC_LEN(de->name_len);
-		memcpy (to, de, rec_len);
-		((struct pmfs_direntry *) to)->rec_len =
-				cpu_to_le16(rec_len);
+		de_len = PMFS_DIR_REC_LEN(de->name_len);
+		memcpy (to, de, de_len);
+		((struct pmfs_direntry *) to)->de_len =
+				cpu_to_le16(de_len);
 		de->inode = 0;
 		map++;
-		to += rec_len;
+		to += de_len;
 	}
 	return (struct pmfs_direntry *) (to - rec_len);
 }
@@ -314,18 +314,18 @@ static struct pmfs_direntry *dx_pack_dirents(char *base, unsigned blocksize)
 {
 	struct pmfs_direntry *next, *to, *prev;
 	struct pmfs_direntry *de = (struct pmfs_direntry *)base;
-	unsigned rec_len = 0;
+	unsigned de_len = 0;
 
 	prev = to = de;
 	while ((char *)de < base + blocksize) {
 		next = pmfs_next_entry(de);
 		if (de->inode && de->name_len) {
-			rec_len = PMFS_DIR_REC_LEN(de->name_len);
+			de_len = PMFS_DIR_REC_LEN(de->name_len);
 			if (de > to)
-				memmove(to, de, rec_len);
-			to->rec_len = cpu_to_le16(rec_len);
+				memmove(to, de, de_len);
+			to->de_len = cpu_to_le16(de_len);
 			prev = to;
-			to = (struct pmfs_direntry *) (((char *) to) + rec_len);
+			to = (struct pmfs_direntry *) (((char *) to) + de_len);
 		}
 		de = next;
 	}
@@ -550,8 +550,8 @@ static struct pmfs_direntry *do_split(pmfs_transaction_t *trans, struct inode *d
 	pmfs_memunlock_block(sb, blk_base2);
 	de2 = dx_move_dirents(data1, data2, map + split, count - split);
 	de = dx_pack_dirents(data1,blocksize);
-	de->rec_len = cpu_to_le16(data1 + blocksize - (char *) de);
-	de2->rec_len = cpu_to_le16(data2 + blocksize - (char *) de2);
+	de->de_len = cpu_to_le16(data1 + blocksize - (char *) de);
+	de2->de_len = cpu_to_le16(data2 + blocksize - (char *) de2);
 	pmfs_memlock_block(sb, blk_base2);
 	pmfs_memlock_block(sb, *blk_base);
 	
@@ -880,7 +880,7 @@ static int pmfs_dx_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 		
 		pmfs_memunlock_block(sb, blk_base2);
 		memset(&node2->fake, 0, sizeof(struct fake_dirent));
-		node2->fake.rec_len = cpu_to_le16(sb->s_blocksize);
+		node2->fake.de_len = cpu_to_le16(sb->s_blocksize);
 		pmfs_memlock_block(sb, blk_base2);
 		
 		if (levels) {
