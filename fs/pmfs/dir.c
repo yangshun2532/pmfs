@@ -246,11 +246,11 @@ static int dx_make_map(struct pmfs_direntry *de, unsigned blocksize,
 			map_tail--;
 			map_tail->hash = h.hash;
 			map_tail->offs = (u16) ((char *) de - base);
-			map_tail->size = le16_to_cpu(de->rec_len);
+			map_tail->size = le16_to_cpu(de->de_len);
 			count++;
 			cond_resched();
 		}
-		/* XXX: do we need to check rec_len == 0 case? -Chris */
+		/* XXX: do we need to check de_len == 0 case? -Chris */
 		de = pmfs_next_entry(de);
 	}
 	return count;
@@ -303,11 +303,11 @@ dx_move_dirents(char *from, char *to, struct dx_map_entry *map, int count)
 		map++;
 		to += de_len;
 	}
-	return (struct pmfs_direntry *) (to - rec_len);
+	return (struct pmfs_direntry *) (to - de_len);
 }
 
 /*
- * Compact each dir entry in the range to the minimal rec_len.
+ * Compact each dir entry in the range to the minimal de_len.
  * Returns pointer to last entry in range.
  */
 static struct pmfs_direntry *dx_pack_dirents(char *base, unsigned blocksize)
@@ -390,10 +390,10 @@ static void dx_insert_block(struct dx_frame *frame, u32 hash, u32 block)
 	 /* The 0th block becomes the root, move the dirents out */
 	 fde = &root->dotdot;
 	 de = (struct pmfs_direntry *)((char *)fde +
-			 le16_to_cpu(fde->rec_len));
+			 le16_to_cpu(fde->de_len));
 	 if ((char *) de >= (((char *) root) + blocksize)) {
 		 pmfs_error(dir->i_sb, __func__,
-				"invalid rec_len for '..' in inode %lu",
+				"invalid de_len for '..' in inode %lu",
 				dir->i_ino);
 		 return -EIO;
 	 }
@@ -428,14 +428,14 @@ static void dx_insert_block(struct dx_frame *frame, u32 hash, u32 block)
 	 top = data1 + len;
 	 while ((char *)(de2 = pmfs_direntry(de)) < top)
 		 de = de2;
-	 de->rec_len = cpu_to_le16(data1 + blocksize - (char *) de);
+	 de->de_len = cpu_to_le16(data1 + blocksize - (char *) de);
 	 pmfs_memlock_block(sb, blk_base2);
 	 
 	 /* Initialize the root; the dot dirents already exist */
 	 de = (struct pmfs_direntry *) (&root->dotdot);
 
 	 pmfs_memunlock_block(sb, blk_base);
-	 de->rec_len = cpu_to_le16(blocksize - PMFS_DIR_REC_LEN(2));
+	 de->de_len = cpu_to_le16(blocksize - PMFS_DIR_REC_LEN(2));
 	 memset (&root->info, 0, sizeof(root->info));
 	 root->info.info_length = sizeof(root->info);
 	 root->info.hash_version = PMFS_SB(dir->i_sb)->s_def_hash_version;
