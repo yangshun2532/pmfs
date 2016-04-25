@@ -331,9 +331,16 @@ static int pmfs_parse_options(char *options, struct pmfs_sb_info *sbi,
 			if (remount)
 				goto bad_opt;
 			set_opt(sbi->s_mount_opt, DIR_INDEX);
+			for(int i=0;i<4;i++)
+			{
+				sbi->s_hash_seed[i]=0;
+			}
+			sbi->s_def_hash_version=DX_HASH_HALF_MD4_UNSIGNED;
+			sbi->s_hash_unsigned=3; 
 			pmfs_info
 				("PMFS: Enabling Dir Index\n");
 			break;
+			//end ys
 		default: {
 			goto bad_opt;
 		}
