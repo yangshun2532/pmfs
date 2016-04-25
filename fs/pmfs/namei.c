@@ -105,7 +105,7 @@ int pmfs_check_dir_entry(const char *function, struct inode *dir,
  * If start_hash is non-null, it will be filled in with the starting
  * hash of the next page.
  */
-static int ext3_htree_next_block(struct inode *dir, __u32 hash,
+static int pmfs_htree_next_block(struct inode *dir, __u32 hash,
 				 struct dx_frame *frame,
 				 struct dx_frame *frames,
 				 __u32 *start_hash)
@@ -155,7 +155,7 @@ static int ext3_htree_next_block(struct inode *dir, __u32 hash,
 			return -EIO; /* Failure */
 		p++;
 		p->bh = blk_base;
-		p->at = p->entries = ((struct dx_node *) blk_base->b_data)->entries;
+		p->at = p->entries = ((struct dx_node *) blk_base)->entries;
 	}
 	return 1;
 }
@@ -190,7 +190,7 @@ static  int  pmfs_dx_find_entry(struct inode *dir,
 		}
 
 		/* Check to see if we should continue to search */
-		retval = ext3_htree_next_block(dir, hinfo.hash, frame,
+		retval = pmfs_htree_next_block(dir, hinfo.hash, frame,
 					       frames, NULL);
 		if (retval < 0) {
 			pmfs_warning(sb, __func__,
