@@ -1041,19 +1041,31 @@ int pmfs_remove_entry(pmfs_transaction_t *trans, struct dentry *de,
 
 	blocks = dir->i_size >> sb->s_blocksize_bits;
 
-	for (block = 0; block < blocks; block++) {
-		blk_base =
-			pmfs_get_block(sb, pmfs_find_data_block(dir, block));
-		if (!blk_base)
-			goto out;
-		if (pmfs_search_dirblock(blk_base, dir, entry,
-					  block << sb->s_blocksize_bits,
-					  &res_entry, &prev_entry) == 1)
-			break;
-	}
+//By ys
+	if (test_opt(sb,DIR_INDEX)) {
+			retval = pmfs_dx_find_entry_pre(dir, entry, &res_entry, &prev_entry);
+			if (retval && (retval != ERR_BAD_DX_DIR)){
+				goto out;
+			}
+			dxtrace(printk("pmfs_find_entry: dx failed, falling back\n"));
+		}
 
-	if (block == blocks)
-		goto out;
+
+	if(retval == ERR_BAD_DX_DIR){
+		for (block = 0; block < blocks; block++) {
+			blk_base =
+				pmfs_get_block(sb, pmfs_find_data_block(dir, block));
+			if (!blk_base)
+				goto out;
+			if (pmfs_search_dirblock(blk_base, dir, entry,
+						  block << sb->s_blocksize_bits,
+						  &res_entry, &prev_entry) == 1)
+				break;
+		}
+		if (block == blocks)
+			goto out;
+	}
+//end ys
 	if (prev_entry) {
 		pmfs_add_logentry(sb, trans, &prev_entry->de_len,
 				sizeof(prev_entry->de_len), LE_DATA);

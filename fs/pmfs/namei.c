@@ -178,7 +178,53 @@ static  int  pmfs_dx_find_entry(struct inode *dir,
 		if (!blk_base) {
 			return -EIO;
 		}
-		retval = search_dirblock(blk_base, dir, entry,
+		retval = pmfs_search_dirblock(blk_base, dir, entry,
+					 block << sb->s_blocksize_bits,
+					 res_dir,NULL);
+		if (retval == 1) {
+			dx_release(frames);
+			return 0;
+		}
+		if (retval == -1) {
+			return ERR_BAD_DX_DIR;
+		}
+
+		/* Check to see if we should continue to search */
+		retval = pmfs_htree_next_block(dir, hinfo.hash, frame,
+					       frames, NULL);
+		if (retval < 0) {
+			pmfs_warning(sb, __func__,
+			     "error reading index page in directory #%lu",
+			     dir->i_ino);
+			err = retval;
+			goto errout;
+		}
+	} while (retval == 1);
+
+	err = -ENOENT;
+errout:
+	return err;
+}
+
+static  int  pmfs_dx_find_entry_pre(struct inode *dir,
+			struct qstr *entry, struct pmfs_direntry **res_dir,
+			struct pmfs_direntry **pre_dir)
+{
+	struct super_block *sb = dir->i_sb;
+	struct dx_hash_info	hinfo;
+	struct dx_frame frames[2], *frame;
+	char *blk_base;
+	unsigned long block;
+	int err;
+
+	if (!(frame = dx_probe(entry, dir, &hinfo, frames, &err)))
+		return err;
+	do {
+		blk_base = pmfs_get_block(sb,pmfs_find_data_block(dir,dx_get_block(frame->at)));
+		if (!blk_base) {
+			return -EIO;
+		}
+		retval = pmfs_search_dirblock(blk_base, dir, entry,
 					 block << sb->s_blocksize_bits,
 					 res_dir);
 		if (retval == 1) {
@@ -205,6 +251,8 @@ static  int  pmfs_dx_find_entry(struct inode *dir,
 errout:
 	return err;
 }
+/*end ys*/
+
 /*end ys*/
 
 /*
