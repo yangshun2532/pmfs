@@ -139,6 +139,12 @@ extern void pmfs_error_mng(struct super_block *sb, const char *fmt, ...);
 /*By ys,Hash.c*/
 extern int pmfs_dirhash(const char *name, int len, struct
 			  dx_hash_info *hinfo);
+
+/*Dir.c*/
+extern int pmfs_dx_find_entry(struct inode *dir,
+			struct qstr *entry, struct pmfs_direntry **res_dir)
+
+
 /*end ys*/
 /* file.c */
 extern int pmfs_mmap(struct file *file, struct vm_area_struct *vma);
