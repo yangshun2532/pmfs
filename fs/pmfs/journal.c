@@ -693,8 +693,9 @@ int pmfs_commit_transaction(struct super_block *sb,
 	if (trans == NULL)
 		return 0;
 	/* Add the commit log-entry */
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 	pmfs_add_logentry(sb, trans, NULL, 0, LE_COMMIT);
-
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 	pmfs_dbg_trans("completing transaction for id %d\n",
 		trans->transaction_id);
 

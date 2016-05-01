@@ -52,8 +52,9 @@ static inline int pmfs_add_nondir(pmfs_transaction_t *trans,
 	return err;
 }
 
-static inline struct pmfs_direntry *pmfs_next_entry(struct pmfs_direntry *p)
+inline struct pmfs_direntry *pmfs_next_entry(struct pmfs_direntry *p)
 {
+	//dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 	return (struct pmfs_direntry *)((char *)p + le16_to_cpu(p->de_len));
 }
 
@@ -102,7 +103,7 @@ int pmfs_search_dirblock(u8 *blk_base, struct inode *dir, struct qstr *child,
 	int de_len;
 	const char *name = child->name;
 	int namelen = child->len;
-
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 	de = (struct pmfs_direntry *)blk_base;
 	dlimit = blk_base + dir->i_sb->s_blocksize;
 	while ((char *)de < dlimit) {
@@ -157,7 +158,7 @@ static ino_t pmfs_inode_by_name(struct inode *dir, struct qstr *entry,
 		block = start = 0;
 		nblocks = 1;
 		goto restart;
-	}-
+	}
 	if (test_opt(sb,DIR_INDEX)) {
 			retval = pmfs_dx_find_entry(dir, entry, res_entry);
 			if (!retval || (retval != ERR_BAD_DX_DIR)){
@@ -212,7 +213,7 @@ static struct dentry *pmfs_lookup(struct inode *dir, struct dentry *dentry,
 	struct inode *inode = NULL;
 	struct pmfs_direntry *de;
 	ino_t ino;
-
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 	if (dentry->d_name.len > PMFS_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
 
@@ -245,12 +246,14 @@ static int pmfs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	int err = PTR_ERR(inode);
 	struct super_block *sb = dir->i_sb;
 	pmfs_transaction_t *trans;
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 
 	/* two log entries for new inode, 1 lentry for dir inode, 1 for dir
 	 * inode's b-tree, 2 lentries for logging dir entry
 	 */
 	trans = pmfs_new_transaction(sb, MAX_INODE_LENTRIES * 2 +
 		MAX_DIRENTRY_LENTRIES);
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 	if (IS_ERR(trans)) {
 		err = PTR_ERR(trans);
 		goto out;
@@ -263,6 +266,7 @@ static int pmfs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	inode->i_mapping->a_ops = &pmfs_aops_xip;
 	inode->i_fop = &pmfs_xip_file_operations;
 	err = pmfs_add_nondir(trans, dir, dentry, inode);
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 	if (err)
 		goto out_err;
 	pmfs_commit_transaction(sb, trans);
@@ -291,6 +295,7 @@ static int pmfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 		err = PTR_ERR(trans);
 		goto out;
 	}
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 
 	inode = pmfs_new_inode(trans, dir, mode, &dentry->d_name);
 	if (IS_ERR(inode))
@@ -321,6 +326,7 @@ static int pmfs_symlink(struct inode *dir, struct dentry *dentry,
 	struct inode *inode;
 	pmfs_transaction_t *trans;
 	struct pmfs_inode *pi;
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 
 	if (len + 1 > sb->s_blocksize)
 		goto out;
@@ -379,7 +385,7 @@ static int pmfs_link(struct dentry *dest_dentry, struct inode *dir,
 	pmfs_transaction_t *trans;
 	struct super_block *sb = inode->i_sb;
 	struct pmfs_inode *pi = pmfs_get_inode(sb, inode->i_ino);
-
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 	if (inode->i_nlink >= PMFS_LINK_MAX)
 		return -EMLINK;
 
@@ -474,6 +480,7 @@ static int pmfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 		err = PTR_ERR(trans);
 		goto out;
 	}
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 
 	inode = pmfs_new_inode(trans, dir, S_IFDIR | mode, &dentry->d_name);
 	err = PTR_ERR(inode);
@@ -555,6 +562,7 @@ static int pmfs_empty_dir(struct inode *inode)
 	struct super_block *sb;
 	char *blk_base;
 	int err = 0;
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 
 	sb = inode->i_sb;
 	if (inode->i_size < PMFS_DIR_REC_LEN(1) + PMFS_DIR_REC_LEN(2)) {
@@ -618,7 +626,7 @@ static int pmfs_rmdir(struct inode *dir, struct dentry *dentry)
 	struct super_block *sb = inode->i_sb;
 	struct pmfs_inode *pi = pmfs_get_inode(sb, inode->i_ino), *pidir;
 	int err = -ENOTEMPTY;
-
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 	if (!inode)
 		return -ENOENT;
 
@@ -688,7 +696,7 @@ static int pmfs_rename(struct inode *old_dir,
 	if (IS_ERR(trans)) {
 		return PTR_ERR(trans);
 	}
-
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 	if (new_inode) {
 		err = -ENOTEMPTY;
 		if (S_ISDIR(old_inode->i_mode) && !pmfs_empty_dir(new_inode))
@@ -771,6 +779,7 @@ struct dentry *pmfs_get_parent(struct dentry *child)
 	struct qstr dotdot = QSTR_INIT("..", 2);
 	struct pmfs_direntry *de = NULL;
 	ino_t ino;
+	dxtrace(printk("reach %lu %s\n",__LINE__,__func__));
 
 	pmfs_inode_by_name(child->d_inode, &dotdot, &de);
 	if (!de)

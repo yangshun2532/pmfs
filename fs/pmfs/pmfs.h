@@ -112,6 +112,15 @@ extern unsigned int blk_type_to_size[PMFS_BLOCK_TYPE_MAX];
 #define DX_HASH_HALF_MD4_UNSIGNED	4
 #define DX_HASH_TEA_UNSIGNED		5
 
+#define ERR_BAD_DX_DIR	-75000
+
+//#ifdef DX_DEBUG
+#define dxtrace(command) command
+//#else
+//#define dxtrace(command)
+//#endif
+
+
 /* hash info structure used by the directory hash */
 struct dx_hash_info
 {
@@ -142,7 +151,9 @@ extern int pmfs_dirhash(const char *name, int len, struct
 
 /*Dir.c*/
 extern int pmfs_dx_find_entry(struct inode *dir,
-			struct qstr *entry, struct pmfs_direntry **res_dir)
+			struct qstr *entry, struct pmfs_direntry **res_dir);
+
+extern inline struct pmfs_direntry *pmfs_next_entry(struct pmfs_direntry *p);
 
 
 /*end ys*/
@@ -278,7 +289,7 @@ static inline int pmfs_calc_checksum(u8 *data, int n)
 		return 1;
 }
 /*By ys*/
-void pmfs_warning(struct super_block *sb, const char *function,
+static void pmfs_warning(struct super_block *sb, const char *function,
 		  const char *fmt, ...)
 {
 	struct va_format vaf;
@@ -295,7 +306,7 @@ void pmfs_warning(struct super_block *sb, const char *function,
 	va_end(args);
 }
 
-void pmfs_error(struct super_block *sb, const char *function,
+static void pmfs_error(struct super_block *sb, const char *function,
 		const char *fmt, ...)
 {
 	struct va_format vaf;

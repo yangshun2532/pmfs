@@ -209,6 +209,7 @@ static int pmfs_parse_options(char *options, struct pmfs_sb_info *sbi,
 	char *p, *rest;
 	substring_t args[MAX_OPT_ARGS];
 	int option;
+	int i;
 
 	if (!options)
 		return 0;
@@ -331,11 +332,11 @@ static int pmfs_parse_options(char *options, struct pmfs_sb_info *sbi,
 			if (remount)
 				goto bad_opt;
 			set_opt(sbi->s_mount_opt, DIR_INDEX);
-			for(int i=0;i<4;i++)
+			for(i=0;i<4;i++)
 			{
 				sbi->s_hash_seed[i]=0;
 			}
-			sbi->s_def_hash_version=DX_HASH_HALF_MD4_UNSIGNED;
+			sbi->s_def_hash_version=DX_HASH_HALF_MD4;
 			sbi->s_hash_unsigned=3; 
 			pmfs_info
 				("PMFS: Enabling Dir Index\n");
@@ -684,6 +685,8 @@ static int pmfs_fill_super(struct super_block *sb, void *data, int silent)
 	clear_opt(sbi->s_mount_opt, PROTECT);
 	set_opt(sbi->s_mount_opt, HUGEIOREMAP);
 
+	clear_opt(sbi->s_mount_opt,DIR_INDEX);
+	
 	INIT_LIST_HEAD(&sbi->s_truncate);
 	mutex_init(&sbi->s_truncate_lock);
 	mutex_init(&sbi->inode_table_mutex);
