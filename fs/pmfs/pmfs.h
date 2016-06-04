@@ -115,9 +115,9 @@ extern unsigned int blk_type_to_size[PMFS_BLOCK_TYPE_MAX];
 #define ERR_BAD_DX_DIR	-75000
 
 //#ifdef DX_DEBUG
-#define dxtrace(command) command
+//#define dxtrace(command) command
 //#else
-//#define dxtrace(command)
+#define dxtrace(command)
 //#endif
 
 
@@ -251,13 +251,17 @@ static inline void pmfs_flush_buffer(void *buf, uint32_t len, bool fence)
 	uint32_t i;
 	len = len + ((unsigned long)(buf) & (CACHELINE_SIZE - 1));
 	for (i = 0; i < len; i += CACHELINE_SIZE)
+		{
 		asm volatile ("clflush %0\n" : "+m" (*(char *)(buf+i)));
+		}
 	/* Do a fence only if asked. We often don't need to do a fence
 	 * immediately after clflush because even if we get context switched
 	 * between clflush and subsequent fence, the context switch operation
 	 * provides implicit fence. */
 	if (fence)
-		asm volatile ("sfence\n" : : );
+		{
+			asm volatile ("sfence\n" : : );
+		}
 }
 
 /* symlink.c */

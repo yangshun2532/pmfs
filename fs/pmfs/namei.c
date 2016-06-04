@@ -159,7 +159,8 @@ static ino_t pmfs_inode_by_name(struct inode *dir, struct qstr *entry,
 		nblocks = 1;
 		goto restart;
 	}
-	if (test_opt(sb,DIR_INDEX)) {
+	nblocks = dir->i_size >> dir->i_sb->s_blocksize_bits;
+	if (test_opt(sb,DIR_INDEX) && nblocks!=1) {
 			retval = pmfs_dx_find_entry(dir, entry, res_entry);
 			if (!retval || (retval != ERR_BAD_DX_DIR)){
 				if(!retval)
@@ -168,7 +169,6 @@ static ino_t pmfs_inode_by_name(struct inode *dir, struct qstr *entry,
 			}
 			dxtrace(printk("pmfs_find_entry: dx failed, falling back\n"));
 		}
-	nblocks = dir->i_size >> dir->i_sb->s_blocksize_bits;
 	start = si->i_dir_start_lookup;
 	if (start >= nblocks)
 		start = 0;

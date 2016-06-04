@@ -899,11 +899,10 @@ static int pmfs_add_dirent_to_buf(pmfs_transaction_t *trans,
 	  /* The 0th block becomes the root, move the dirents out */
 	  fde = &root->dotdot;
 
-	  printk("dotdot: %p\n",fde);
 	  
 	  de = (struct pmfs_direntry *)((char *)fde +
 			  le16_to_cpu(fde->de_len));
-		printk("de: %p\n",de);
+		
 		
 	  
 	  if ((char *) de >= (((char *) root) + blocksize)) {
@@ -1161,16 +1160,15 @@ int pmfs_add_entry(pmfs_transaction_t *trans, struct dentry *dentry,
 	
 	pidir = pmfs_get_inode(sb, dir->i_ino);
 	pmfs_add_logentry(sb, trans, pidir, MAX_DATA_PER_LENTRY, LE_DATA);
-
-	if (test_opt(sb,DIR_INDEX)) {
+	
+	blocks = dir->i_size >> sb->s_blocksize_bits;
+	if (test_opt(sb,DIR_INDEX) && blocks!=1) {
 			//printk("go to dx_add_entry");
 			retval = pmfs_dx_add_entry(trans, dentry, inode);
 			if (!retval || (retval != ERR_BAD_DX_DIR))
 				return retval;
 		}
 
-
-	blocks = dir->i_size >> sb->s_blocksize_bits;
 	for (block = 0; block < blocks; block++) {
 		blk_base =
 			pmfs_get_block(sb, pmfs_find_data_block(dir, block));
@@ -1234,7 +1232,7 @@ int pmfs_remove_entry(pmfs_transaction_t *trans, struct dentry *de,
 	blocks = dir->i_size >> sb->s_blocksize_bits;
 
 //By ys
-	if (test_opt(sb,DIR_INDEX)) {
+	if (test_opt(sb,DIR_INDEX) && blocks!=1) {
 			retval = pmfs_dx_find_entry_pre(dir, entry, &res_entry, &prev_entry);
 			if (retval && (retval != ERR_BAD_DX_DIR)){
 				goto out;
@@ -1243,7 +1241,7 @@ int pmfs_remove_entry(pmfs_transaction_t *trans, struct dentry *de,
 		}
 
 
-	if(!test_opt(sb,DIR_INDEX) || retval == ERR_BAD_DX_DIR){
+	if(!(test_opt(sb,DIR_INDEX) && blocks!=1) || retval == ERR_BAD_DX_DIR){
 		for (block = 0; block < blocks; block++) {
 			blk_base =
 				pmfs_get_block(sb, pmfs_find_data_block(dir, block));
