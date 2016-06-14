@@ -34,11 +34,11 @@ For example, adding 'memmap=2G$4G' to the kernel boot parameters will reserve
 interpreted by GRUB 2, if you use that as your boot loader.)
 
 After the OS has booted, you can initialize PMFS during mount command by
-passing 'init=' mount option.
+passing 'init=' mount option and using 'dir-index' to open the directory index.
 
 For example,
 
-<pre>#mount -t pmfs -o physaddr=0x100000000,init=2G none /mnt/pmfs</pre>
+<pre>#mount -t pmfs -o physaddr=0x100000000,dir-index,init=2G none /mnt/pmfs</pre>
 
 The above command will create a PMFS file system in the 2GB region starting at
 0x100000000 (4GB) and mount it at /mnt/pmfs.  There are many other mount time
